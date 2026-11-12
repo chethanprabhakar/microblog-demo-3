@@ -95,6 +95,16 @@ followers = sa.Table(
 )
 
 
+post_likes = sa.Table(
+    'post_likes',
+    db.metadata,
+    sa.Column('user_id', sa.Integer, sa.ForeignKey('user.id'),
+              primary_key=True),
+    sa.Column('post_id', sa.Integer, sa.ForeignKey('post.id'),
+              primary_key=True)
+)
+
+
 class User(PaginatedAPIMixin, UserMixin, db.Model):
     id: so.Mapped[int] = so.mapped_column(primary_key=True)
     username: so.Mapped[str] = so.mapped_column(sa.String(64), index=True,
@@ -127,6 +137,8 @@ class User(PaginatedAPIMixin, UserMixin, db.Model):
     notifications: so.WriteOnlyMapped['Notification'] = so.relationship(
         back_populates='user')
     tasks: so.WriteOnlyMapped['Task'] = so.relationship(back_populates='user')
+    liked_posts: so.WriteOnlyMapped['Post'] = so.relationship(
+        secondary=post_likes, back_populates='likes')
 
     def __repr__(self):
         return '<User {}>'.format(self.username)
@@ -152,6 +164,15 @@ class User(PaginatedAPIMixin, UserMixin, db.Model):
     def is_following(self, user):
         query = self.following.select().where(User.id == user.id)
         return db.session.scalar(query) is not None
+
+    def like_post(self, post):
+        post.like(self)
+
+    def unlike_post(self, post):
+        post.unlike(self)
+
+    def has_liked_post(self, post):
+        return post.is_liked_by(self)
 
     def followers_count(self):
         query = sa.select(sa.func.count()).select_from(
@@ -295,9 +316,28 @@ class Post(SearchableMixin, db.Model):
     language: so.Mapped[Optional[str]] = so.mapped_column(sa.String(5))
 
     author: so.Mapped[User] = so.relationship(back_populates='posts')
+    likes: so.WriteOnlyMapped['User'] = so.relationship(
+        secondary=post_likes, back_populates='liked_posts')
 
     def __repr__(self):
         return '<Post {}>'.format(self.body)
+
+    def is_liked_by(self, user):
+        query = self.likes.select().where(User.id == user.id)
+        return db.session.scalar(query) is not None
+
+    def like(self, user):
+        if not self.is_liked_by(user):
+            self.likes.add(user)
+
+    def unlike(self, user):
+        if self.is_liked_by(user):
+            self.likes.remove(user)
+
+    def like_count(self):
+        query = sa.select(sa.func.count()).select_from(
+            self.likes.select().subquery())
+        return db.session.scalar(query)
 
 
 class Message(db.Model):
